@@ -283,9 +283,13 @@ class NewKarma(callbacks.Plugin):
 	            self.db.garbageCollect(channel, thing)
                 else:
                     self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, "up"))
-        #elif thing.endswith('--'):
-        elif "--" in thing:
-            thing = thing.split("--")[0]
+        #decrement unless some person has "--" in their name in channel
+        elif "--" in thing and thing not in irc.state.channels[channel].users:
+            #Hack for users with "--" in their name being given negative karma
+            if thing[0:-2] in irc.state.channels[channel].users:
+                thing = thing[0:-2]
+            else:
+                thing = thing.split("--")[0]
             if ircutils.strEqual(thing, irc.msg.nick) and \
                not self.registryValue('allowSelfRating', channel):
                 irc.error('You\'re not allowed to adjust your own karma.')
