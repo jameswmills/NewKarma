@@ -218,8 +218,95 @@ class SqliteKarmaDB(object):
         db.commit()
         fd.close()
 
+class SqliteAliasDB(object):
+    def __init__(self, filename):
+        self.dbs = ircutils.IrcDict()
+        self.filename = filename
+
+    def close(self):
+        for db in self.dbs.itervalues():
+            db.close()
+
+    def _getDb(self, channel):
+        filename = plugins.makeChannelFilename(self.filename, channel)
+        if filename in self.dbs:
+            return self.dbs[filename]
+        if os.path.exists(filename):
+            db = sqlite3.connect(filename)
+            db.text_factory = str
+            self.dbs[filename] = db
+            return db
+        db = sqlite3.connect(filename)
+        db.text_factory = str
+        self.dbs[filename] = db
+        cursor = db.cursor()
+        cursor.execute("""CREATE TABLE alias (
+                          id INTEGER PRIMARY KEY,
+                          name TEXT,
+                          normalized TEXT,
+                          aliases TEXT UNIQUE ON CONFLICT IGNORE
+                          )""")
+        db.commit()
+        def p(s1, s2):
+            return int(ircutils.nickEqual(s1, s2))
+        db.create_function('nickeq', 2, p)
+        return db
+
+    def get(self, channel, thing):
+        db = self._getDb(channel)
+        thing = thing.lower()
+        cursor = db.cursor()
+        cursor.execute("""SELECT normalized FROM alias
+                          WHERE aliases=?""", (thing.lower(),))
+        results = cursor.fetchall()
+        if len(results) == 0:
+            return []
+        else:
+            return [str(x[0]) for x in results]
+
+    def alias(self, channel, name, alias):
+        db = self._getDb(channel)
+        cursor = db.cursor()
+        cursor.execute("""INSERT INTO alias VALUES (NULL, ?, ?, ?)""", (name, name.lower(), alias,))
+        db.commit()
+
+    def unalias(self, channel, name, alias):
+        db = self._getDb(channel)
+        cursor = db.cursor()
+        cursor.execute("""DELETE FROM alias where normalized=? AND aliases=?""", (name.lower(), alias,))
+        db.commit()
+
+    def dump(self, channel, filename):
+        filename = conf.supybot.directories.data.dirize(filename)
+        fd = utils.transactionalFile(filename)
+        out = csv.writer(fd)
+        db = self._getDb(channel)
+        cursor = db.cursor()
+        cursor.execute("""SELECT name, aliases FROM alias""")
+        for (name, aliases) in cursor.fetchall():
+            out.writerow([name, aliases])
+        fd.close()
+
+    def load(self, channel, filename):
+        filename = conf.supybot.directories.data.dirize(filename)
+        fd = file(filename)
+        reader = csv.reader(fd)
+        db = self._getDb(channel)
+        cursor = db.cursor()
+        cursor.execute("""DELETE FROM alias""")
+        for (name, aliases) in reader:
+            normalized = name.lower()
+            cursor.execute("""INSERT INTO alias
+                              VALUES (NULL, ?, ?, ?)""",
+                           (name, normalized, aliases,))
+        db.commit()
+        fd.close()
+
+
 KarmaDB = plugins.DB('Karma',
                      {'sqlite3': SqliteKarmaDB})
+AliasDB = plugins.DB('KarmaAliases',
+                     {'sqlite3': SqliteAliasDB})
 
 class NewKarma(callbacks.Plugin):
     callBefore = ('Factoids', 'MoobotFactoids', 'Infobot')
@@ -227,10 +314,12 @@ class NewKarma(callbacks.Plugin):
         self.__parent = super(NewKarma, self)
         self.__parent.__init__(irc)
         self.db = KarmaDB()
+        self.alias_db = AliasDB()
 
     def die(self):
         self.__parent.die()
         self.db.close()
+        self.alias_db.close()
 
     def _normalizeThing(self, thing):
         assert thing
@@ -247,8 +336,7 @@ class NewKarma(callbacks.Plugin):
         else:
             irc.noReply()
 
-    def _parseKarmaMessage(self, name, total, channel, direction):
-        log.info(direction)
+    def _parseKarmaMessage(self, name, total, channel, originalname, direction):
         if direction == "up":
             message = self.registryValue('karmaMessageUp', channel)
         elif direction == "down":
@@ -259,14 +347,33 @@ class NewKarma(callbacks.Plugin):
             message = "I have no idea what you are talking about."
         if total == 1 or total == -1:
             message = message.replace('points', 'point')
+        if originalname:
+            name = "%s (%s)" % (originalname, name)
         return  message.replace('USER', name).replace('TOTAL', str(total))
 
+    def _doAlias(self, irc, channel, things):
+      name = things.split('is also known as')[0].split()[-1]
+      alias = things.split('is also known as')[1].split()[0]
+      self.alias_db.alias(channel, name, alias)
+      irc.reply("%s is also %s, got it!" % (name, alias))
+
+    def _doUnalias(self, irc, channel, things):
+      name = things.split('is no longer known as')[0].split()[-1]
+      alias = things.split('is no longer known as')[1].split()[0]
+      self.alias_db.unalias(channel, name, alias)
+      irc.reply("Who?  I've forgotten that %s was ever %s!" % (name, alias))
 
     def _doKarma(self, irc, channel, things):
       for thing in things.split():
+        originalthing = None
         #if thing.endswith('++'):
         if "++" in thing:
             thing = thing.split("++")[0]
+            #see if what we are incrementing is an alias for someone
+            aliasfor = self.alias_db.get(channel, self._normalizeThing(thing))
+            if aliasfor:
+                originalthing = thing
+                thing = aliasfor[0]
             if ircutils.strEqual(thing, irc.msg.nick) and \
                not self.registryValue('allowSelfRating', channel):
                 irc.error('You\'re not allowed to adjust your own karma.')
@@ -279,10 +386,10 @@ class NewKarma(callbacks.Plugin):
                     (added, subtracted) = t
                     total = added - subtracted
                 if total == 0:
-                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, "none"))
+                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, originalthing, "none"))
 	            self.db.garbageCollect(channel, thing)
                 else:
-                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, "up"))
+                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, originalthing, "up"))
         #decrement unless some person has "--" in their name in channel
         elif "--" in thing and thing not in irc.state.channels[channel].users:
             #Hack for users with "--" in their name being given negative karma
@@ -290,6 +397,11 @@ class NewKarma(callbacks.Plugin):
                 thing = thing[0:-2]
             else:
                 thing = thing.split("--")[0]
+            #see if what we are incrementing is an alias for someone
+            aliasfor = self.alias_db.get(channel, self._normalizeThing(thing))
+            if aliasfor:
+                originalthing = thing
+                thing = aliasfor[0]
             if ircutils.strEqual(thing, irc.msg.nick) and \
                not self.registryValue('allowSelfRating', channel):
                 irc.error('You\'re not allowed to adjust your own karma.')
@@ -302,10 +414,10 @@ class NewKarma(callbacks.Plugin):
                     (added, subtracted) = t
                     total = added - subtracted
                 if total == 0:
-                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, "none"))
+                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, originalthing, "none"))
 	            self.db.garbageCollect(channel, thing)
                 else:
-                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, "down"))
+                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, originalthing, "down"))
 
     def invalidCommand(self, irc, msg, tokens):
         channel = msg.args[0]
@@ -328,6 +440,12 @@ class NewKarma(callbacks.Plugin):
                 thing = msg.args[1].rstrip()
                 if '++' in thing or '--' in thing:
                     self._doKarma(irc, channel, thing)
+                if 'is also known as' in thing:
+                    self._doAlias(irc, channel, thing)
+
+                if 'is no longer known as' in thing:
+                    self._doUnalias(irc, channel, thing)
+
 
     def karma(self, irc, msg, args, channel, things):
         """[<channel>] [<thing> ...]
