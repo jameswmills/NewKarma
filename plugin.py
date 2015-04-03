@@ -252,6 +252,18 @@ class SqliteAliasDB(object):
         db.create_function('nickeq', 2, p)
         return db
 
+    def get_aliases(self, channel, thing):
+        db = self._getDb(channel)
+        thing = thing.lower()
+        cursor = db.cursor()
+        cursor.execute("""SELECT aliases FROM alias
+                          WHERE normalized=?""", (thing.lower(),))
+        results = cursor.fetchall()
+        if len(results) == 0:
+            return []
+        else:
+            return [str(x[0]) for x in results]
+
     def get(self, channel, thing):
         db = self._getDb(channel)
         thing = thing.lower()
@@ -446,6 +458,21 @@ class NewKarma(callbacks.Plugin):
                 if 'is no longer known as' in thing:
                     self._doUnalias(irc, channel, thing)
 
+    def showaliases(self, irc, msg, args, channel, name):
+        """[<channel>] <word>
+
+        Lists the karmaaliases for a given word.
+        """
+        if name:
+          name = name[0]
+          aliases = self.alias_db.get_aliases(channel, name)
+          if aliases:
+            irc.reply("%s is known as: %s." % (name, ", ".join(aliases)))
+          else:
+            irc.reply("%s doesn't have any aliases!" % (name))
+        else:
+          irc.reply("Give me *something*!  A nick, a word, anything!")
+    showaliases = wrap(showaliases, ['channel', any('something')])
 
     def karma(self, irc, msg, args, channel, things):
         """[<channel>] [<thing> ...]
