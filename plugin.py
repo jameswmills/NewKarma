@@ -467,7 +467,12 @@ class NewKarma(callbacks.Plugin):
           name = name[0]
           aliases = self.alias_db.get_aliases(channel, name)
           if aliases:
-            irc.reply("%s is known as: %s." % (name, ", ".join(aliases)))
+            sep = ", "
+            if len(aliases) > 2:
+              aliases[-1] = "and %s" % (aliases[-1])
+            elif len(aliases) == 2:
+              sep = " and "
+            irc.reply("%s is known as %s." % (name, sep.join(aliases)))
           else:
             irc.reply("%s doesn't have any aliases!" % (name))
         else:
