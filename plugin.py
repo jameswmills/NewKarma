@@ -390,8 +390,10 @@ class NewKarma(callbacks.Plugin):
               if type(thing) != list:
                 thing = [thing]
               for athing in thing:
+                #Honor allowSelfRating unless this is a group alias
                 if ircutils.strEqual(athing, irc.msg.nick) and \
-                   not self.registryValue('allowSelfRating', channel):
+                   not self.registryValue('allowSelfRating', channel) and \
+                   len(thing) == 1:
                   irc.error('You\'re not allowed to adjust your own karma.')
                 else:
                   self.db.increment(channel, self._normalizeThing(athing))
@@ -422,8 +424,10 @@ class NewKarma(callbacks.Plugin):
               if type(thing) != list:
                 thing = [thing]
               for athing in thing:
+                #Honor allowSelfRating unless this is a group alias
                 if ircutils.strEqual(athing, irc.msg.nick) and \
-                   not self.registryValue('allowSelfRating', channel):
+                   not self.registryValue('allowSelfRating', channel) and \
+                   len(thing) == 1:
                   irc.error('You\'re not allowed to adjust your own karma.')
                 else:
                   self.db.decrement(channel, self._normalizeThing(athing))
