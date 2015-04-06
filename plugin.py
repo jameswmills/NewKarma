@@ -244,7 +244,7 @@ class SqliteAliasDB(object):
                           id INTEGER PRIMARY KEY,
                           name TEXT,
                           normalized TEXT,
-                          aliases TEXT UNIQUE ON CONFLICT IGNORE
+                          aliases TEXT
                           )""")
         db.commit()
         def p(s1, s2):
@@ -381,27 +381,31 @@ class NewKarma(callbacks.Plugin):
         #if thing.endswith('++'):
         if "++" in thing:
             thing = thing.split("++")[0]
-            #see if what we are incrementing is an alias for someone
-            aliasfor = self.alias_db.get(channel, self._normalizeThing(thing))
-            if aliasfor:
+            if thing:
+              #see if what we are incrementing is an alias for someone
+              aliasfor = self.alias_db.get(channel, self._normalizeThing(thing))
+              if aliasfor:
                 originalthing = thing
-                thing = aliasfor[0]
-            if ircutils.strEqual(thing, irc.msg.nick) and \
-               not self.registryValue('allowSelfRating', channel):
-                irc.error('You\'re not allowed to adjust your own karma.')
-            elif thing:
-                self.db.increment(channel, self._normalizeThing(thing))
-                t = self.db.get(channel, thing)
-                if t is None:
-                    total = 0
+                thing = aliasfor
+              if type(thing) != list:
+                thing = [thing]
+              for athing in thing:
+                if ircutils.strEqual(athing, irc.msg.nick) and \
+                   not self.registryValue('allowSelfRating', channel):
+                  irc.error('You\'re not allowed to adjust your own karma.')
                 else:
+                  self.db.increment(channel, self._normalizeThing(athing))
+                  t = self.db.get(channel, athing)
+                  if t is None:
+                    total = 0
+                  else:
                     (added, subtracted) = t
                     total = added - subtracted
-                if total == 0:
-                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, originalthing, "none"))
-	            self.db.garbageCollect(channel, thing)
-                else:
-                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, originalthing, "up"))
+                  if total == 0:
+                    self._respond(irc, channel, self._parseKarmaMessage(athing, total, channel, originalthing, "none"))
+	            self.db.garbageCollect(channel, athing)
+                  else:
+                    self._respond(irc, channel, self._parseKarmaMessage(athing, total, channel, originalthing, "up"))
         #decrement unless some person has "--" in their name in channel
         elif "--" in thing and thing not in irc.state.channels[channel].users:
             #Hack for users with "--" in their name being given negative karma
@@ -409,27 +413,31 @@ class NewKarma(callbacks.Plugin):
                 thing = thing[0:-2]
             else:
                 thing = thing.split("--")[0]
-            #see if what we are incrementing is an alias for someone
-            aliasfor = self.alias_db.get(channel, self._normalizeThing(thing))
-            if aliasfor:
+            if thing:
+              #see if what we are incrementing is an alias for someone
+              aliasfor = self.alias_db.get(channel, self._normalizeThing(thing))
+              if aliasfor:
                 originalthing = thing
-                thing = aliasfor[0]
-            if ircutils.strEqual(thing, irc.msg.nick) and \
-               not self.registryValue('allowSelfRating', channel):
-                irc.error('You\'re not allowed to adjust your own karma.')
-            elif thing:
-                self.db.decrement(channel, self._normalizeThing(thing))
-                t = self.db.get(channel, thing)
-                if t is None:
-                    total = 0
+                thing = aliasfor
+              if type(thing) != list:
+                thing = [thing]
+              for athing in thing:
+                if ircutils.strEqual(athing, irc.msg.nick) and \
+                   not self.registryValue('allowSelfRating', channel):
+                  irc.error('You\'re not allowed to adjust your own karma.')
                 else:
+                  self.db.decrement(channel, self._normalizeThing(athing))
+                  t = self.db.get(channel, athing)
+                  if t is None:
+                    total = 0
+                  else:
                     (added, subtracted) = t
                     total = added - subtracted
-                if total == 0:
-                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, originalthing, "none"))
-	            self.db.garbageCollect(channel, thing)
-                else:
-                    self._respond(irc, channel, self._parseKarmaMessage(thing, total, channel, originalthing, "down"))
+                  if total == 0:
+                    self._respond(irc, channel, self._parseKarmaMessage(athing, total, channel, originalthing, "none"))
+	            self.db.garbageCollect(channel, athing)
+                  else:
+                    self._respond(irc, channel, self._parseKarmaMessage(athing, total, channel, originalthing, "down"))
 
     def invalidCommand(self, irc, msg, tokens):
         channel = msg.args[0]
