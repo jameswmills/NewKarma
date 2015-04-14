@@ -269,7 +269,7 @@ class SqliteAliasDB(object):
         thing = thing.lower()
         cursor = db.cursor()
         cursor.execute("""SELECT normalized FROM alias
-                          WHERE aliases=?""", (thing.lower(),))
+                          WHERE aliases like ?""", (thing.lower(),))
         results = cursor.fetchall()
         if len(results) == 0:
             return []
